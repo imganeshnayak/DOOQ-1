@@ -1,55 +1,55 @@
 import { View, StyleSheet, ScrollView, Image, RefreshControl } from 'react-native';
 import { Text, Card, Button, Chip, Searchbar, FAB, Surface } from 'react-native-paper';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { RelativePathString, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import Logo from '../components/Logo';
-import customTheme from '../theme'; // Import the custom theme
+import Config from 'react-native-config';
+import axios from 'axios';
+import Constants from 'expo-constants';
+
+const API_URL = Constants.expoConfig?.extra?.API_URL;
+
+
+
 
 const CATEGORIES = ['All', 'Moving', 'Cleaning', 'Delivery', 'Assembly', 'Gardening'];
 
-const tasks = [
-  {
-    id: 1,
-    title: 'Help Moving Furniture',
-    description: 'Need help moving heavy furniture from a 2-bedroom apartment to a new house, including a sofa, bed, and dining table.',
-    budget: 150,
-    location: 'Brooklyn, NY',
-    category: 'Moving',
-    dueDate: '2024-02-20',
-    image: 'https://images.unsplash.com/photo-1600585152220-90363fe7e115',
-  },
-  {
-    id: 2,
-    title: 'Garden Maintenance',
-    description: 'Looking for someone to help with general garden maintenance including mowing, weeding, and pruning.',
-    budget: 80,
-    location: 'Queens, NY',
-    category: 'Gardening',
-    dueDate: '2024-02-22',
-    image: 'https://images.unsplash.com/photo-1557429287-b2e26467fc2b',
-  },
-  {
-    id: 3,
-    title: 'Furniture Assembly',
-    description: 'Need help assembling IKEA furniture - 2 wardrobes and a bed frame. All tools will be provided.',
-    budget: 120,
-    location: 'Manhattan, NY',
-    category: 'Assembly',
-    dueDate: '2024-02-25',
-    image: 'https://images.unsplash.com/photo-1631679706909-1844bbd07221',
-  },
-];
+// Define the Task type
+type Task = {
+  _id: string;
+  title: string;
+  description?: string; // Make it optional if it can be undefined
+  budget: number;
+  location?: string;
+  category: string;
+  dueDate: string;
+  image?: string; // Add other properties as needed
+};
 
 export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [tasks, setTasks] = useState<Task[]>([]); // Use the Task type
+
+  const fetchTasks = async () => {
+    try {
+      console.log('API URL:', API_URL);
+      const response = await axios.get(`${API_URL}/api/tasks`);
+      setTasks(response.data);
+    } catch (error) {
+      console.error('Error fetching tasks:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchTasks();
+  }, []);
 
   const onRefresh = () => {
     setRefreshing(true);
-    // Simulate refresh
-    setTimeout(() => setRefreshing(false), 1000);
+    fetchTasks().finally(() => setRefreshing(false));
   };
 
   return (
@@ -61,9 +61,13 @@ export default function HomeScreen() {
         <Text style={[styles.headerSubtitle, { color: '#0e0e0e' }]}>Available Tasks</Text>
       </Surface>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.content} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
         {tasks.map((task) => (
-          <Surface key={task.id} style={styles.card} elevation={1}>
+          <Surface key={task._id} style={styles.card} elevation={1}>
             <Image
               source={{ uri: task.image }}
               style={styles.taskImage}
@@ -75,20 +79,20 @@ export default function HomeScreen() {
               </View>
               
               <Text variant="bodyMedium" style={styles.description} numberOfLines={2}>
-                {task.description}
+                {task.description ? task.description : 'No description available'}
               </Text>
 
               <View style={styles.tags}>
-                <Chip icon="map-marker" compact>{task.location}</Chip>
+                <Chip icon="map-marker" compact>{task.location ? task.location : 'No location available'}</Chip>
                 <Chip icon="tag" compact>{task.category}</Chip>
                 <Chip icon="calendar" compact>{task.dueDate}</Chip>
               </View>
             </Card.Content>
             <Card.Actions>
-              <Button mode="outlined" onPress={() => router.push(`/task/${task.id}` as RelativePathString)}>
+              <Button mode="outlined" onPress={() => router.push(`/task/${task._id}` as RelativePathString)}>
                 View Details
               </Button>
-              <Button mode="contained" onPress={() => router.push(`/task/${task.id}/offer` as RelativePathString)}>
+              <Button mode="contained" onPress={() => router.push(`/task/${task._id}/offer` as RelativePathString)}>
                 Make Offer
               </Button>
             </Card.Actions>
