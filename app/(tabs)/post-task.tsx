@@ -1,9 +1,9 @@
 import { View, StyleSheet, ScrollView } from 'react-native';
 import { Text, TextInput, Button, Chip } from 'react-native-paper';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
+import * as Location from 'expo-location';
 import axios from 'axios';
 import Constants from 'expo-constants';
 
@@ -11,49 +11,71 @@ const API_URL = Constants.expoConfig?.extra?.API_URL;
 
 const CATEGORIES = ['Moving', 'Cleaning', 'Delivery', 'Assembly', 'Gardening', 'Painting', 'Pet Care', 'Tech Help'];
 
+interface Location {
+  latitude: number | null;
+  longitude: number | null;
+}
+
 export default function PostTaskScreen() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [budget, setBudget] = useState('');
-  const [location, setLocation] = useState('');
+  const [location, setLocation] = useState<Location>({ latitude: null, longitude: null });
   const [dueDate, setDueDate] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null); // Allow string or null
 
-  const handleSubmit = async () => {
-    try {
-      let token;
-      try {
-        token = await AsyncStorage.getItem('authToken'); // Retrieve token
-      } catch (error) {
-        console.error('Error retrieving token:', error);
+  // Request location permission and get coordinates
+  useEffect(() => {
+    (async () => {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setErrorMsg('Permission to access location was denied'); // Now this works
         return;
       }
 
+      let location = await Location.getCurrentPositionAsync({});
+      setLocation({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      });
+    })();
+  }, []);
+
+
+
+  
+ 
+
+
+  const handleSubmit = async () => {
+    try {
+      let token = await AsyncStorage.getItem('authToken');
       if (!token) {
         console.error("No token found, user is not authenticated.");
         return;
       }
-
-      console.log("Using token:", token); // Debugging
-
-      const response = await axios.post(
-        'http://10.0.2.2:5000/api/tasks',
-        {
-          title,
-          description,
-          budget,
-          location,
-          dueDate,
-          category: selectedCategory,
-        },
-        {
-          headers: { Authorization: `Bearer ${token}` }, // Include token
-        }
-      );
-
+  
+      const taskData = {
+        title,
+        description,
+        budget,
+        location: location.latitude && location.longitude 
+          ? { latitude: location.latitude, longitude: location.longitude } 
+          : null, // Ensuring correct format
+        dueDate,
+        category: selectedCategory,
+      };
+  
+      console.log("Sending Task Data:", taskData); // Debugging
+  
+      const response = await axios.post(`${API_URL}/api/tasks`, taskData, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+  
       console.log('Task created:', response.data);
       router.push('./tabs');
-    } catch (error: any) {
+    } catch (error:any) {
       console.error('Error creating task:', error.response?.data || error.message);
     }
   };
@@ -106,13 +128,12 @@ export default function PostTaskScreen() {
             style={styles.input}
           />
 
-          <TextInput
-            label="Location"
-            value={location}
-            onChangeText={setLocation}
-            mode="outlined"
-            style={styles.input}
-          />
+          <Text variant="titleMedium" style={styles.sectionTitle}>Location</Text>
+          <Text style={styles.coordinates}>
+            {location.latitude && location.longitude
+              ? `Latitude: ${location.latitude}, Longitude: ${location.longitude}`
+              : 'Fetching location...'}
+          </Text>
 
           <TextInput
             label="Due Date"
@@ -144,12 +165,12 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingTop: 24, // Add more padding at the top
+    paddingTop: 24,
   },
   title: {
     fontFamily: 'Poppins-SemiBold',
     marginBottom: 24,
-    marginTop: 16, // Add margin to the top of the title
+    marginTop: 16,
   },
   form: {
     gap: 16,
@@ -169,6 +190,11 @@ const styles = StyleSheet.create({
   },
   categoryChip: {
     marginBottom: 8,
+  },
+  coordinates: {
+    fontFamily: 'Poppins-Regular',
+    marginBottom: 16,
+    color: '#666',
   },
   button: {
     marginTop: 8,

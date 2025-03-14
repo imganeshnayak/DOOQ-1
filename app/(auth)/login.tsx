@@ -18,22 +18,18 @@ export default function Login() {
   const handleLogin = async () => {
     try {
         console.log('Attempting login...');
-        const response = await axios.post(`${process.env.API_URL}/users/login`, {
+        const response = await axios.post(`${API_URL}/api/users/login`, {
             email,
             password
         });
 
         console.log('Login successful:', response.data);
         const { token } = response.data;
-        await AsyncStorage.setItem("authToken", token); // ✅ Store token properly
+        await AsyncStorage.setItem("authToken", token); // Store token properly
     
-        // Store the token (you should use secure storage in production)
-        // await SecureStore.setItemAsync('userToken', response.data.token);
-        
         router.replace('/(tabs)');
     } catch (error: any) {
         console.error('Login error:', error.response?.data || error.message);
-        // Show error to user (you should add proper error handling UI)
         Alert.alert('Login Failed', error.response?.data?.message || 'An error occurred');
     }
   };
