@@ -18,13 +18,19 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you share them with your tasks."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
-      "API_URL": "http://192.168.154.125:5000"
+      "API_URL": "http://192.168.254.125:5000"
     }
   }
 }

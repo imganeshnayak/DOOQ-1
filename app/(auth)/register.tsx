@@ -20,7 +20,7 @@ export default function RegisterScreen() {
     console.log('Register button clicked');
     try {
       console.log('Sending registration request...');
-      const response = await axios.post('http://10.0.2.2:5000/api/users/register', {
+      const response = await axios.post('http://192.168.154.125:5000/api/users/register', {
         name,
         email,
         password,

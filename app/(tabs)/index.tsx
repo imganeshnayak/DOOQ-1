@@ -1,34 +1,38 @@
-import { View, StyleSheet, ScrollView, Image, RefreshControl } from 'react-native';
-import { Text, Card, Button, Chip, Searchbar, FAB, Surface } from 'react-native-paper';
+import { 
+  View, StyleSheet, ScrollView, Image, RefreshControl, Alert, Linking 
+} from 'react-native';
+import { 
+  Text, Card, Button, Chip, Searchbar, FAB, Surface, IconButton, ActivityIndicator 
+} from 'react-native-paper';
 import { useState, useEffect } from 'react';
 import { RelativePathString, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import * as Location from 'expo-location'; // Import expo-location
+import * as Location from 'expo-location';
 import Logo from '../components/Logo';
 import axios from 'axios';
 import Constants from 'expo-constants';
 
 const API_URL = Constants.expoConfig?.extra?.API_URL;
-
 const CATEGORIES = ['All', 'Moving', 'Cleaning', 'Delivery', 'Assembly', 'Gardening'];
 
-// Define the Task type
 type Task = {
   _id: string;
   title: string;
   description?: string;
   budget: number;
-  location?: { latitude: number; longitude: number }; // Task location
+  location?: {
+    coordinates?: { latitude: number; longitude: number };
+    city?: string;
+  };
   category: string;
   dueDate: string;
   image?: string;
 };
 
-// Haversine formula to calculate distance between two coordinates
+// Haversine formula to calculate distance
 const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   const toRadians = (degrees: number) => degrees * (Math.PI / 180);
-
-  const R = 6371; // Radius of the Earth in kilometers
+  const R = 6371;
   const dLat = toRadians(lat2 - lat1);
   const dLon = toRadians(lon2 - lon1);
 
@@ -37,10 +41,7 @@ const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
     Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const distance = R * c; // Distance in kilometers
-
-  return distance;
+  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 };
 
 export default function HomeScreen() {
@@ -48,12 +49,15 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null); // User's location
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [isLocationLoading, setIsLocationLoading] = useState(true);
+  const [currentCity, setCurrentCity] = useState<string | null>(null); // State for current city name
 
-  // Fetch tasks from the API
+  // Fetch tasks from API
   const fetchTasks = async () => {
     try {
-      console.log('API URL:', API_URL);
+      console.log('Fetching tasks...');
       const response = await axios.get(`${API_URL}/api/tasks`);
       setTasks(response.data);
     } catch (error) {
@@ -61,153 +65,210 @@ export default function HomeScreen() {
     }
   };
 
-  // Get the user's current location
-  useEffect(() => {
-    (async () => {
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        console.error('Permission to access location was denied');
+  // Get user location and reverse geocode to get city name
+  const getLocation = async (manualFetch = false) => {
+    setIsLocationLoading(true);
+    setLocationError(null);
+
+    try {
+      const enabled = await Location.hasServicesEnabledAsync();
+      if (!enabled) {
+        setLocationError('Location services are disabled');
+        Alert.alert(
+          'Location Required',
+          'Please enable location services to see nearby tasks',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          ]
+        );
         return;
       }
 
-      let location = await Location.getCurrentPositionAsync({});
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocationError('Permission to access location was denied');
+        return;
+      }
+
+      // Fetch user's current location
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
       setUserLocation({
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
       });
-    })();
-  }, []);
+
+      try {
+        // Reverse geocode to get city name
+        const address = await Location.reverseGeocodeAsync({
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        });
+
+        if (address.length > 0) {
+          setCurrentCity(address[0].city || address[0].region || 'Unknown Location');
+        }
+      } catch (reverseGeocodeError) {
+        console.error('Reverse geocoding failed:', reverseGeocodeError);
+        setCurrentCity('Location details unavailable');
+      }
+
+      if (manualFetch) {
+        Alert.alert("Location Updated", "Your location has been updated.");
+      }
+    } catch (error) {
+      console.error('Error fetching location:', error);
+      setLocationError('Unable to get your location');
+    } finally {
+      setIsLocationLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchTasks();
+    getLocation();
   }, []);
+
+  useEffect(() => {
+    // Re-fetch tasks when location updates
+    if (userLocation) {
+      fetchTasks();
+    }
+  }, [userLocation]);
 
   const onRefresh = () => {
     setRefreshing(true);
     fetchTasks().finally(() => setRefreshing(false));
   };
 
-  // Filter tasks based on search query, selected category, and 30 km radius
   const filteredTasks = tasks.filter(task => {
-    // Check if the task matches the search query and category
     const matchesSearchAndCategory =
       (selectedCategory === 'All' || task.category === selectedCategory) &&
       task.title.toLowerCase().includes(searchQuery.toLowerCase());
 
-    // Check if the task is within 30 km of the user's location
-    if (userLocation && task.location) {
+    if (isLocationLoading || locationError) {
+      return matchesSearchAndCategory;
+    }
+
+    if (userLocation && task.location?.coordinates) {
       const distance = haversineDistance(
         userLocation.latitude,
         userLocation.longitude,
-        task.location.latitude,
-        task.location.longitude
+        task.location.coordinates.latitude,
+        task.location.coordinates.longitude
       );
-      return matchesSearchAndCategory && distance <= 30; // Only include tasks within 30 km
+      return matchesSearchAndCategory && distance <= 30;
     }
 
-    // If location data is missing, exclude the task
-    return false;
+    return matchesSearchAndCategory;
   });
 
   return (
     <View style={styles.container}>
       <StatusBar style="dark" />
 
-      {/* Header Section */}
-      <Surface style={styles.header} elevation={0}>
-        <Logo size="medium" />
+      <Surface style={styles.header}>
+        <View style={styles.headerRow}>
+          <Logo size="medium" />
+          <View style={styles.locationButtonContainer}>
+            <IconButton
+              icon="crosshairs-gps"
+              onPress={() => getLocation(true)}
+              loading={isLocationLoading}
+              style={styles.locationButton}
+            />
+            {isLocationLoading ? (
+              <ActivityIndicator size="small" color="#666" />
+            ) : (
+              <Text style={styles.cityText}>{currentCity || 'Location details unavailable'}</Text>
+            )}
+          </View>
+        </View>
         <Text style={styles.headerSubtitle}>Available Tasks</Text>
 
-        {/* Search Bar */}
         <Searchbar
           placeholder="Search tasks"
           onChangeText={setSearchQuery}
           value={searchQuery}
           style={styles.searchBar}
-          elevation={1}
         />
 
-        {/* Category Chips */}
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categories}
-        >
-          {CATEGORIES.map((category) => (
-            <Chip
-              key={category}
-              selected={selectedCategory === category}
-              onPress={() => setSelectedCategory(category)}
-              style={styles.categoryChip}
-              showSelectedOverlay
-            >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categories}>
+          {CATEGORIES.map(category => (
+            <Chip key={category} selected={selectedCategory === category} onPress={() => setSelectedCategory(category)}>
               {category}
             </Chip>
           ))}
         </ScrollView>
       </Surface>
 
-      {/* Task List */}
-      <ScrollView 
-        style={styles.content} 
-        showsVerticalScrollIndicator={false}
+      <ScrollView
+        style={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {filteredTasks.map((task) => {
-          // Calculate distance if user location and task location are available
-          const distance = userLocation && task.location
-            ? haversineDistance(
-                userLocation.latitude,
-                userLocation.longitude,
-                task.location.latitude,
-                task.location.longitude
-              ).toFixed(2) // Round to 2 decimal places
-            : null;
+        {filteredTasks.map(task => (
+          <Surface key={task._id} style={styles.card}>
+            {task.image && <Image source={{ uri: task.image }} style={styles.taskImage} />}
 
-          return (
-            <Surface key={task._id} style={styles.card} elevation={1}>
-              <Image
-                source={{ uri: task.image }}
-                style={styles.taskImage}
-              />
-              <Card.Content>
-                <View style={styles.taskHeader}>
-                  <Text variant="titleLarge" style={styles.taskTitle}>{task.title}</Text>
-                  <Text variant="titleMedium" style={styles.budget}>${task.budget}</Text>
-                </View>
-                
-                <Text variant="bodyMedium" style={styles.description} numberOfLines={2}>
-                  {task.description ? task.description : 'No description available'}
-                </Text>
+            <Card.Content>
+              <View style={styles.taskHeader}>
+                <Text variant="titleLarge">{task.title}</Text>
+                <Text variant="titleMedium" style={styles.price}>${task.budget}</Text>
+              </View>
 
-                <View style={styles.tags}>
-                  <Chip icon="map-marker" compact>
-                    {distance ? `${distance} km away` : 'Distance not available'}
-                  </Chip>
-                  <Chip icon="tag" compact>{task.category}</Chip>
-                  <Chip icon="calendar" compact>{task.dueDate}</Chip>
-                </View>
-              </Card.Content>
-              <Card.Actions>
-                <Button mode="outlined" onPress={() => router.push(`/task/${task._id}` as RelativePathString)}>
-                  View Details
-                </Button>
-                <Button mode="contained" onPress={() => router.push(`/task/${task._id}/offer` as RelativePathString)}>
-                  Make Offer
-                </Button>
-              </Card.Actions>
-            </Surface>
-          );
-        })}
+              <Text variant="bodyMedium" numberOfLines={2}>
+                {task.description || 'No description available'}
+              </Text>
+
+              <View style={styles.tags}>
+                {task.location?.city && <Chip icon="map-marker">{task.location.city}</Chip>}
+                {userLocation && task.location?.coordinates && (
+                  <Chip icon="map">{haversineDistance(
+                    userLocation.latitude,
+                    userLocation.longitude,
+                    task.location.coordinates.latitude,
+                    task.location.coordinates.longitude
+                  ).toFixed(2)} km away</Chip>
+                )}
+                <Chip icon="tag">{task.category}</Chip>
+                <Chip icon="calendar">{new Date(task.dueDate).toLocaleDateString()}</Chip>
+              </View>
+            </Card.Content>
+
+            <Card.Actions>
+              <Button
+                mode="outlined"
+                onPress={() => router.push({
+                  pathname: '/view-details',
+                  params: {
+                    id: task._id,
+                    title: task.title,
+                    description: task.description,
+                    budget: task.budget,
+                    category: task.category,
+                    dueDate: task.dueDate,
+                    image: task.image ? encodeURIComponent(task.image) : null, // ✅ Encode URL to prevent issues
+                    location: JSON.stringify(task.location), // Convert object to string
+                  },
+                })}
+              >
+                View Details
+              </Button>
+              <Button 
+                mode="contained"
+                onPress={() => router.push('/make-offer')}
+              >
+                Make Offer
+              </Button>
+            </Card.Actions>
+          </Surface>
+        ))}
       </ScrollView>
 
-      {/* Floating Action Button */}
-      <FAB
-        icon="plus"
-        label="Post a Task"
-        style={styles.fab}
-        onPress={() => router.push('/post-task')}
-      />
+      <FAB icon="plus" label="Post a Task" style={styles.fab} onPress={() => router.push('/post-task')} />
     </View>
   );
 }
@@ -223,6 +284,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(0,0,0,0.05)',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   headerSubtitle: {
     fontFamily: 'Poppins-Regular',
@@ -257,6 +323,7 @@ const styles = StyleSheet.create({
     height: 200,
     width: '100%',
     borderRadius: 8,
+    marginBottom: 16,
   },
   taskHeader: {
     flexDirection: 'row',
@@ -268,8 +335,8 @@ const styles = StyleSheet.create({
     flex: 1,
     fontFamily: 'Poppins-SemiBold',
   },
-  budget: {
-    color: '#FF5733',
+  price: {
+    color: '#FF5733', // Orange color for price
     fontFamily: 'Poppins-SemiBold',
   },
   description: {
@@ -287,5 +354,17 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: '#FF5733',
+  },
+  locationButtonContainer: {
+    alignItems: 'center',
+  },
+  locationButton: {
+    margin: 0,
+    padding: 0,
+  },
+  cityText: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
   },
 });
